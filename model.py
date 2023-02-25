@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import transformers
+from  torchmetrics import Accuracy, Precision, Recall, F1Score
 from transformers import BartForSequenceClassification, BertTokenizer
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 
@@ -18,6 +19,14 @@ class PunDetModel(pl.LightningModule):
         self.predict_step_preds, self.predict_step_texts = [], []
         self.tokenizer = BertTokenizer.from_pretrained(config.pretrained_path)
         self.model = BartForSequenceClassification.from_pretrained(config.pretrained_path, num_labels = config.num_classes)
+        self.val_acc = Accuracy(task="multiclass", num_classes=3)
+        self.val_precision = Precision(task="multiclass", average="macro", num_classes=3)
+        self.val_recall = Recall(task="multiclass", average="macro", num_classes=3)
+        self.val_macro_f1 = F1Score(task="multiclass", average="macro", num_classes=3)
+        self.test_acc = Accuracy(task="multiclass", num_classes=3)
+        self.test_precision = Precision(task="multiclass", average="macro", num_classes=3)
+        self.test_recall = Recall(task="multiclass", average="macro", num_classes=3)
+        self.test_macro_f1 = F1Score(task="multiclass", average="macro", num_classes=3)
 
     def forward(self, input_ids, labels, attention_mask = None):
         """
@@ -51,19 +60,13 @@ class PunDetModel(pl.LightningModule):
         loss = outputs.loss
         self.validation_step_outputs.append(logits)
         pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
-        accuracy, precision, recall, macro_f1 = self._shared_log_step(y, pred)
-        metrics = {"val_loss": loss, "val_acc": accuracy, "val_precision": precision, "val_recall": recall, "val_macro_f1": macro_f1}
-        self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.val_acc(pred, y)
+        self.val_precision(pred, y)
+        self.val_recall(pred, y)
+        self.val_macro_f1(pred, y)
+        metrics = {"val_loss": loss, "val_acc": self.val_acc, "val_precision": self.val_precision, "val_recall": self.val_recall, "val_macro_f1": self.val_macro_f1}
+        self.log_dict(metrics, on_epoch=True, prog_bar=True, logger=True)
         return logits
-    
-    def _shared_log_step(self, y, pred):
-        y_true = y.cpu().numpy()
-        y_pred = pred.cpu().numpy()
-        accuracy = accuracy_score(y_true, y_pred)
-        precision = precision_score(y_true, y_pred, average="macro")
-        recall = recall_score(y_true, y_pred, average="macro")
-        macro_f1 = f1_score(y_true, y_pred, average="macro")
-        return accuracy, precision, recall, macro_f1
 
     def on_validation_epoch_end(self):
         # all_preds = torch.stack(self.validation_step_outputs)
@@ -76,9 +79,12 @@ class PunDetModel(pl.LightningModule):
         logits = outputs.logits
         self.test_step_outputs.append(logits)
         pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
-        accuracy, precision, recall, macro_f1 = self._shared_log_step(y, pred)
-        metrics = {"test_acc": accuracy, "test_precision": precision, "test_recall": recall, "test_macro_f1": macro_f1}
-        self.log_dict(metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.test_acc(pred, y)
+        self.test_precision(pred, y)
+        self.test_recall(pred, y)
+        self.test_macro_f1(pred, y)
+        metrics = {"test_acc": self.test_acc, "test_precision": self.test_precision, "test_recall": self.test_recall, "test_macro_f1": self.test_macro_f1}
+        self.log_dict(metrics, on_epoch=True, prog_bar=True, logger=True)
         return logits
     
     def predict_step(self, batch, batch_idx, dataloader_idx = 0):

@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+import warnings
 from datetime import datetime
 
 import wandb
@@ -19,6 +20,7 @@ import utils
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(BASE_DIR))
+warnings.filterwarnings('ignore')
 
 
 def parse_args():
@@ -45,7 +47,7 @@ def parse_args():
     parser.add_argument('--warmup_steps', type=int, default=700, help='warm up steps')
     parser.add_argument('--gradient_clip_val', default=2.0, type=float, required=False)
     parser.add_argument('--log_every_n_steps', default=10, type=int, required=False, help='多少步汇报一次loss')
-    parser.add_argument("--is_resume", type=str, default="False", help="是否重新恢复训练")
+    parser.add_argument("--is_resume", action="store_true", help="是否重新恢复训练")
     parser.add_argument("--resume_checkpoint_path", type=str, default="", required=False, help="训练断点文件的路径")
     parser.add_argument("--num_workers", type=int, default=64)
     parser.add_argument("--deterministic", action="store_false")    # 不输入--deterministic时，默认为True
@@ -72,7 +74,10 @@ def train_model(config, model, datamodule):
     lr_monitor = LearningRateMonitor(logging_interval="step")
     device_stats = DeviceStatsMonitor()
     trainer = pl.Trainer.from_argparse_args(args=config, callbacks=[checkpoint, lr_monitor, device_stats])
-    trainer.fit(model, datamodule=datamodule)
+    if config.is_resume:
+        trainer.fit(model, datamodule=datamodule, ckpt_path = config.resume_checkpoint_path)
+    else:
+        trainer.fit(model, datamodule=datamodule)
     print("trainer.checkpoint_callback.best_model_path: ", str(trainer.checkpoint_callback.best_model_path))
 
     trainer.test(model, datamodule=datamodule, verbose=False)
