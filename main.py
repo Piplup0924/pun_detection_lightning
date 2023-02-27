@@ -12,7 +12,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchmetrics import Precision
 from tqdm import tqdm, trange
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, DeviceStatsMonitor
+from pytorch_lightning.callbacks import RichProgressBar
+from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
+
 
 from data_process import PunDataModule
 from model import PunDetModel
@@ -42,11 +46,11 @@ def parse_args():
     parser.add_argument("--test_path", type=str, default="../Data/Dataset/CCL2018_data_3_valid.json", required=False)
     parser.add_argument("--checkpoint_path", type=str, default="./saved_models")
     parser.add_argument("--default_root_dir", type=str, default="./")
-    parser.add_argument("--label", type=str, default="exp1")
-    parser.add_argument('--accumulate_grad_batches', default=16, type=int, required=False, help='梯度积累')
+    parser.add_argument("--label", type=str, default="exp0")
+    parser.add_argument('--accumulate_grad_batches', default=1, type=int, required=False, help='梯度积累')
     parser.add_argument('--warmup_steps', type=int, default=700, help='warm up steps')
-    parser.add_argument('--gradient_clip_val', default=2.0, type=float, required=False)
-    parser.add_argument('--log_every_n_steps', default=10, type=int, required=False, help='多少步汇报一次loss')
+    parser.add_argument('--gradient_clip_val', default=None, type=float, required=False)
+    parser.add_argument('--log_every_n_steps', default=50, type=int, required=False, help='多少步汇报一次loss')
     parser.add_argument("--is_resume", action="store_true", help="是否重新恢复训练")
     parser.add_argument("--resume_checkpoint_path", type=str, default="", required=False, help="训练断点文件的路径")
     parser.add_argument("--num_workers", type=int, default=64)
@@ -54,13 +58,27 @@ def parse_args():
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--overfit_batches", type=float, default=0.0, help="快速debug")
     parser.add_argument("--precision", type=str, default="16")
+    parser.add_argument("--progress_bar_refresh_rate", type=int, default=20)
 
     args = parser.parse_args()
 
     return args
 
-def train_model(config, model, datamodule):
-    
+def train_model(config, model, datamodule, logger):
+    # create your own theme!
+    progress_bar = RichProgressBar(
+        theme=RichProgressBarTheme(
+            description="green_yellow",
+            progress_bar="green1",
+            progress_bar_finished="green1",
+            progress_bar_pulse="#6206E0",
+            batch_progress="green_yellow",
+            time="grey82",
+            processing_speed="grey82",
+            metrics="grey82",
+        ),
+        leave=True,
+    )
     checkpoint = ModelCheckpoint(
         dirpath=config.checkpoint_path,
         filename="{epoch:02d}-{val_macro_f1:.4f}",
@@ -73,7 +91,8 @@ def train_model(config, model, datamodule):
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
     device_stats = DeviceStatsMonitor()
-    trainer = pl.Trainer.from_argparse_args(args=config, callbacks=[checkpoint, lr_monitor, device_stats])
+    trainer = pl.Trainer.from_argparse_args(args=config, callbacks=[checkpoint, lr_monitor, device_stats, progress_bar], logger=wandb_logger)
+    wandb_logger.watch(model, log="all")
     if config.is_resume:
         trainer.fit(model, datamodule=datamodule, ckpt_path = config.resume_checkpoint_path)
     else:
@@ -86,11 +105,9 @@ def train_model(config, model, datamodule):
 if __name__ == "__main__":
     config = parse_args()
 
-    # if eval(config.is_train):
-    #     wandb.init(project="pun_detection", name=config.label)
-    #     wandb.config = config
-    
+    wandb_logger = WandbLogger(project="Lightning Test", name="test1")
     pl.seed_everything(config.seed)
+    torch.set_float32_matmul_precision('high')
 
     # dt = datetime.now()
     save_path = "/" + config.label
@@ -100,5 +117,5 @@ if __name__ == "__main__":
 
     model = PunDetModel(config=config)
     print(config)
-
-    train_model(config, model, PunData)
+    
+    train_model(config, model, PunData, wandb_logger)

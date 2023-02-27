@@ -45,12 +45,12 @@ class PunDetModel(pl.LightningModule):
         logits = outputs.logits
         loss = outputs.loss
         self.training_step_outputs.append(logits)
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log("train_loss", loss, on_step=True, logger=True)
         return loss
     
     def on_train_epoch_end(self):
         # all_preds = torch.stack(self.training_step_outputs)
-        self.print("")
+        ...
         self.training_step_outputs.clear()
     
     def validation_step(self, batch, batch_idx):
@@ -64,13 +64,13 @@ class PunDetModel(pl.LightningModule):
         self.val_precision(pred, y)
         self.val_recall(pred, y)
         self.val_macro_f1(pred, y)
-        metrics = {"val_loss": loss, "val_acc": self.val_acc, "val_precision": self.val_precision, "val_recall": self.val_recall, "val_macro_f1": self.val_macro_f1}
-        self.log_dict(metrics, on_epoch=True, prog_bar=True, logger=True)
+        metrics = {"val_loss": loss, "val_acc": self.val_acc, "val_precision": self.val_precision, "val_recall": self.val_recall}
+        self.log_dict(metrics, on_epoch=True, logger=True)
+        self.log("val_macro_f1", self.val_macro_f1, on_step=False, on_epoch=True, prog_bar=True)
         return logits
 
     def on_validation_epoch_end(self):
         # all_preds = torch.stack(self.validation_step_outputs)
-        self.print('')
         self.validation_step_outputs.clear()
     
     def test_step(self, batch, batch_idx):
@@ -84,7 +84,7 @@ class PunDetModel(pl.LightningModule):
         self.test_recall(pred, y)
         self.test_macro_f1(pred, y)
         metrics = {"test_acc": self.test_acc, "test_precision": self.test_precision, "test_recall": self.test_recall, "test_macro_f1": self.test_macro_f1}
-        self.log_dict(metrics, on_epoch=True, prog_bar=True, logger=True)
+        self.log_dict(metrics, on_epoch=True, logger=True)
         return logits
     
     def predict_step(self, batch, batch_idx, dataloader_idx = 0):
