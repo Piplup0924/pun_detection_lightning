@@ -2,10 +2,12 @@ import os
 import json
 import sys
 import math
+import re
 
 import torch
+import pandas as pd
 import pytorch_lightning as pl
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 from transformers import BertTokenizer, DataProcessor
 
 # os.environ['TOKENIZERS_PARALLELISM']="false"
@@ -17,70 +19,91 @@ class PunDataModule(pl.LightningDataModule):
 
     def __init__(self, config) -> None:
         super().__init__()
-        self.train_path = config.train_path
-        self.val_path = config.val_path
-        self.test_path = config.test_path
+        self.data_path = config.data_path
         self.tokenizer = BertTokenizer.from_pretrained(config.pretrained_path)
         self.labels = config.num_classes
         self.config = config
         self._load_data()
         
-
-    def read_data(self, filename):
-        with open(filename, "r") as f:
-            raw_data = json.load(f)
-        text, labels = [], []
-        label_name = ["homophonic", "homographic", "reverse"]
-        for i, name in enumerate(label_name):
-            samples = raw_data[name]
-            for sample in samples:
-                text.append(sample['content'])
-                labels.append(i)
-        return text, labels
     
-    def get_data(self, mode="train"):
-        [data, labels] = self.read_data(eval("self.%s_path" % mode))
-        data_length = len(data)
+    def _get_data(self):
+        raw_data = pd.read_csv(self.config.data_path)
+        raw_data.dropna(subset=["query"], inplace = True)
+        text, pun_labels, emotion_labels = raw_data["query"].to_list(), list(map(lambda x: eval(x[0]),raw_data["是否双关"].to_list())), raw_data["涨跌语义"].to_list()
+        data_length = len(text)
         tokenized_data = self.tokenizer(
-            data,
+            text,
             padding=True,
             truncation=True,
             return_tensors="pt",
             max_length=512,
         )
-        return tokenized_data, labels, data_length
+        return tokenized_data, pun_labels, data_length
+    
+    def _clean_up(self, x):
+        emojipat = re.compile("\[.*?\]")
+        apat = re.compile("\{\{\w*_\d*\}\}")
+        spanpat = re.compile("<.*?>")
+        tagpat = re.compile("#.*?#")
+        # x = x.replace("<p>","").replace("</p>", "")
+        x = emojipat.sub("", x)
+        x = tagpat.sub("", x)
+        x = apat.sub("", x)
+        x = spanpat.sub("", x)
+        return x.strip()
+
+    def _get_pred_data(self):
+        raw_data = pd.read_csv(self.config.pred_path)
+        raw_data.dropna(subset=["online_content"], inplace=True)
+        content = raw_data["online_content"].to_list()
+        text = list(filter(bool,list(map(self._clean_up, content))))
+        data_length = len(text)
+        fake_labels = [0] * data_length
+        tokenized_data = self.tokenizer(
+            text,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=512,
+        )
+        return tokenized_data, fake_labels, data_length
+
 
     def _load_data(self):
-        print("loading training dataset and validating dataset!")
-        self.train_data, self.train_labels, train_data_length = self.get_data(mode="train")
-        print("train_length: %d" % train_data_length)
-        self.val_data, self.val_labels, val_data_length = self.get_data(mode="val")
-        print("valid_length: %d" % val_data_length)
-        self.test_data, self.test_labels, test_data_length = self.get_data(mode="test")
-        print("test_length: %d" % test_data_length)
+        if self.config.is_train:
+            print("loading training dataset and validating dataset!")
+            self.data, self.pun_labels, data_length = self._get_data()
+            print("data_length: %d" % data_length)
+            # self.test_data, self.test_labels, test_data_length = self.get_data(mode="test")
+            # print("test_length: %d" % test_data_length)
+        else:
+            print("loading predicting dataset!")
+            self.data, self.fake_labels, data_length = self._get_pred_data()
+            print("data_length: %d" % data_length)
 
     def prepare_data(self):
         ...
 
     def setup(self, stage: str):
         if stage == "fit":
-            self.train_dataset = torch.utils.data.TensorDataset(
-                torch.LongTensor(self.train_data["input_ids"]),
-                torch.LongTensor(self.train_data["attention_mask"]),
-                torch.LongTensor(self.train_labels),
+            self.dataset = torch.utils.data.TensorDataset(
+                torch.LongTensor(self.data["input_ids"]),
+                torch.LongTensor(self.data["attention_mask"]),
+                torch.LongTensor(self.pun_labels),
             )
-            self.val_dataset = torch.utils.data.TensorDataset(
-                torch.LongTensor(self.val_data["input_ids"]),
-                torch.LongTensor(self.val_data["attention_mask"]),
-                torch.LongTensor(self.val_labels),
-            )
+            self.train_dataset, self.val_dataset = random_split(self.dataset, [0.8, 0.2], generator=torch.Generator().manual_seed(20220924))
+            self.config.total_steps = math.ceil(self.config.max_epochs / self.config.accumulate_grad_batches * math.ceil(len(self.train_dataset) / self.config.batch_size))
+        
         if stage == "test":
-            self.test_dataset = torch.utils.data.TensorDataset(
-                torch.LongTensor(self.test_data["input_ids"]),
-                torch.LongTensor(self.test_data["attention_mask"]),
-                torch.LongTensor(self.test_labels),
+            self.test_dataset = self.val_dataset
+
+        if stage == "predict":
+            self.pred_dataset = torch.utils.data.TensorDataset(
+                torch.LongTensor(self.data["input_ids"]),
+                torch.LongTensor(self.data["attention_mask"]),
+                torch.LongTensor(self.fake_labels)
             )
-        self.config.total_steps = math.ceil(self.config.max_epochs / self.config.accumulate_grad_batches * math.ceil(len(self.train_dataset) / self.config.batch_size))
+        
     
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size = self.config.batch_size, num_workers=self.config.num_workers, pin_memory=True)
@@ -91,3 +114,5 @@ class PunDataModule(pl.LightningDataModule):
     def test_dataloader(self):
         return DataLoader(self.test_dataset, batch_size = self.config.batch_size, num_workers=self.config.num_workers, pin_memory=True)
     
+    def predict_dataloader(self):
+        return DataLoader(self.pred_dataset, batch_size = self.config.pred_batch_size, num_workers=self.config.num_workers, pin_memory=True)

@@ -1,3 +1,6 @@
-__pycache__/data_process.cpython-37.pyc
-__pycache__/model.cpython-37.pyc
-__pycache__/utils.cpython-37.pyc
+pun.csv
+ugc_others.csv
+saved_models
+wandb
+lightning_logs
+__pycache__

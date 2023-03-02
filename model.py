@@ -73,19 +73,18 @@ class PunDetModel(pl.LightningModule):
         # all_preds = torch.stack(self.validation_step_outputs)
         self.validation_step_outputs.clear()
     
-    def test_step(self, batch, batch_idx):
-        x, a, y = batch
-        outputs = self(input_ids = x, attention_mask = a, labels = y)
-        logits = outputs.logits
-        self.test_step_outputs.append(logits)
-        pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
-        self.test_acc(pred, y)
-        self.test_precision(pred, y)
-        self.test_recall(pred, y)
-        self.test_macro_f1(pred, y)
-        metrics = {"test_acc": self.test_acc, "test_precision": self.test_precision, "test_recall": self.test_recall, "test_macro_f1": self.test_macro_f1}
-        self.log_dict(metrics, on_epoch=True, logger=True)
-        return logits
+    # def test_step(self, batch, batch_idx):
+        # x, a, y = batch
+        # outputs = self(input_ids = x, attention_mask = a, labels = y)
+        # logits = outputs.logits
+        # pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
+        # self.test_acc(pred, y)
+        # self.test_precision(pred, y)
+        # self.test_recall(pred, y)
+        # self.test_macro_f1(pred, y)
+        # metrics = {"test_acc": self.test_acc, "test_precision": self.test_precision, "test_recall": self.test_recall, "test_macro_f1": self.test_macro_f1}
+        # self.log_dict(metrics, on_epoch=True, logger=True)
+        # return logits
     
     def predict_step(self, batch, batch_idx, dataloader_idx = 0):
         x, a, y = batch     # [batch_size, max_seq_len], [batch_size, max_seq_len], [batch_size, num_cls]
@@ -101,15 +100,14 @@ class PunDetModel(pl.LightningModule):
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr, eps=self.config.eps)
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": transformers.get_linear_schedule_with_warmup(
-                        optimizer=optimizer, 
-                        num_warmup_steps=self.config.warmup_steps, 
-                        num_training_steps = self.config.total_steps
-                    ),
-                "monitor": "metric_to_track",
-                "interval": "step"
-            }
+            # "lr_scheduler": {
+            #     "scheduler": transformers.get_linear_schedule_with_warmup(
+            #             optimizer=optimizer, 
+            #             num_training_steps = self.config.total_steps
+            #         ),
+            #     "monitor": "metric_to_track",
+            #     "interval": "step"
+            # }
         }
 
 if __name__ == "__main__":

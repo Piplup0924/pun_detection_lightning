@@ -17,7 +17,6 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, De
 from pytorch_lightning.callbacks import RichProgressBar
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 
-
 from data_process import PunDataModule
 from model import PunDetModel
 import utils
@@ -29,36 +28,36 @@ warnings.filterwarnings('ignore')
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--is_train", type=str, default="True")
+    parser.add_argument("--is_train", action="store_true", help="是否为训练阶段")
     parser.add_argument("--accelerator", type=str, default="gpu")
     parser.add_argument("--devices", type=int, default=[0])
-    # parser.add_argument("--gpus", type=int, default=0)
     parser.add_argument("--max_epochs", type=int, default=30)
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=1e-3, required=False)
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--pred_batch_size", type=int, default=128)
+    parser.add_argument("--lr", type=float, default=2e-5, required=False)
     parser.add_argument("--eps", type=float, default=1e-8, required=False, help="AdamW中的eps")
     parser.add_argument("--seed", type=int, default=20220924)
     parser.add_argument("--max_seq_length", type=int, default=512)
     parser.add_argument("--num_classes", type=int, default=3)
-    parser.add_argument("--pretrained_path", type=str, default="/home/chenyang/code/pun/pun_detection/bart-base-chinese")
-    parser.add_argument("--train_path", type=str, default="../Data/Dataset/CCL2018_data_3_train.json")
-    parser.add_argument("--val_path", type=str, default="../Data/Dataset/CCL2018_data_3_valid.json")
-    parser.add_argument("--test_path", type=str, default="../Data/Dataset/CCL2018_data_3_valid.json", required=False)
-    parser.add_argument("--checkpoint_path", type=str, default="./saved_models")
+    parser.add_argument("--pretrained_path", type=str, default="./bart-large-chinese")
+    parser.add_argument("--data_path", type=str, default="./pun.csv")
+    parser.add_argument("--pred_path", type=str, default="./ugc_others.csv", required=False)
+    parser.add_argument("--checkpoint_path", type=str, default="./saved_models", help="存放训练断点的路径")
     parser.add_argument("--default_root_dir", type=str, default="./")
-    parser.add_argument("--label", type=str, default="exp0")
-    parser.add_argument('--accumulate_grad_batches', default=1, type=int, required=False, help='梯度积累')
+    parser.add_argument("--label", type=str, default="exp1")
+    parser.add_argument('--accumulate_grad_batches', default=4, type=int, required=False, help='梯度积累')
     parser.add_argument('--warmup_steps', type=int, default=700, help='warm up steps')
     parser.add_argument('--gradient_clip_val', default=None, type=float, required=False)
     parser.add_argument('--log_every_n_steps', default=50, type=int, required=False, help='多少步汇报一次loss')
     parser.add_argument("--is_resume", action="store_true", help="是否重新恢复训练")
-    parser.add_argument("--resume_checkpoint_path", type=str, default="", required=False, help="训练断点文件的路径")
+    parser.add_argument("--resume_checkpoint_path", type=str, default="./saved_models/exp1/epoch=22-val_macro_f1=0.7137.ckpt", required=False, help="训练断点文件的路径")
     parser.add_argument("--num_workers", type=int, default=64)
     parser.add_argument("--deterministic", action="store_false")    # 不输入--deterministic时，默认为True
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--overfit_batches", type=float, default=0.0, help="快速debug")
     parser.add_argument("--precision", type=str, default="16")
     parser.add_argument("--progress_bar_refresh_rate", type=int, default=20)
+    # parser.add_argument("--strategy", type=str, default="ddp_find_unused_parameters_false")
 
     args = parser.parse_args()
 
@@ -101,13 +100,29 @@ def train_model(config, model, datamodule, logger):
 
     trainer.test(model, datamodule=datamodule, verbose=False)
     
+def predict_model(config, model, datamodule):
+    progress_bar = RichProgressBar(
+        theme=RichProgressBarTheme(
+            description="green_yellow",
+            progress_bar="green1",
+            progress_bar_finished="green1",
+            progress_bar_pulse="#6206E0",
+            batch_progress="green_yellow",
+            time="grey82",
+            processing_speed="grey82",
+            metrics="grey82",
+        ),
+        leave=True,
+    )
+    trainer = pl.Trainer.from_argparse_args(args=config)
+    predictions = trainer.predict(model, datamodule)
+    return predictions
 
 if __name__ == "__main__":
     config = parse_args()
 
-    wandb_logger = WandbLogger(project="Lightning Test", name="test1")
     pl.seed_everything(config.seed)
-    torch.set_float32_matmul_precision('high')
+    # torch.set_float32_matmul_precision('high')
 
     # dt = datetime.now()
     save_path = "/" + config.label
@@ -115,7 +130,11 @@ if __name__ == "__main__":
 
     PunData = PunDataModule(config=config)
 
-    model = PunDetModel(config=config)
     print(config)
-    
-    train_model(config, model, PunData, wandb_logger)
+    if config.is_train:
+        wandb_logger = WandbLogger(project="alipay pun detection", name="BART_2_Large")
+        model = PunDetModel(config=config)
+        train_model(config, model, PunData, wandb_logger)
+    else:
+        model = PunDetModel.load_from_checkpoint(config.resume_checkpoint_path, config=config)
+        print(predict_model(config, model, PunData))
