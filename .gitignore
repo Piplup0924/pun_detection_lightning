@@ -4,3 +4,5 @@ saved_models
 wandb
 lightning_logs
 __pycache__
+others.txt
+results

@@ -29,6 +29,8 @@ warnings.filterwarnings('ignore')
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--is_train", action="store_true", help="是否为训练阶段")
+    parser.add_argument("--is_test", action="store_false", help="是否为测试阶段")
+    parser.add_argument("--is_pred", action="store_true", help="是否为预测阶段")
     parser.add_argument("--accelerator", type=str, default="gpu")
     parser.add_argument("--devices", type=int, default=[0])
     parser.add_argument("--max_epochs", type=int, default=30)
@@ -98,7 +100,7 @@ def train_model(config, model, datamodule, logger):
         trainer.fit(model, datamodule=datamodule)
     print("trainer.checkpoint_callback.best_model_path: ", str(trainer.checkpoint_callback.best_model_path))
 
-    trainer.test(model, datamodule=datamodule, verbose=False)
+    # trainer.test(model, datamodule=datamodule, verbose=False)
     
 def predict_model(config, model, datamodule):
     progress_bar = RichProgressBar(
@@ -118,6 +120,23 @@ def predict_model(config, model, datamodule):
     predictions = trainer.predict(model, datamodule)
     return predictions
 
+def test_model(config, model, datamodule):
+    progress_bar = RichProgressBar(
+        theme=RichProgressBarTheme(
+            description="green_yellow",
+            progress_bar="green1",
+            progress_bar_finished="green1",
+            progress_bar_pulse="#6206E0",
+            batch_progress="green_yellow",
+            time="grey82",
+            processing_speed="grey82",
+            metrics="grey82",
+        ),
+        leave=True,
+    )
+    trainer = pl.Trainer.from_argparse_args(args=config)
+    trainer.test(model, datamodule)
+
 if __name__ == "__main__":
     config = parse_args()
 
@@ -135,6 +154,9 @@ if __name__ == "__main__":
         wandb_logger = WandbLogger(project="alipay pun detection", name="BART_2_Large")
         model = PunDetModel(config=config)
         train_model(config, model, PunData, wandb_logger)
-    else:
+    elif config.is_test:
         model = PunDetModel.load_from_checkpoint(config.resume_checkpoint_path, config=config)
-        print(predict_model(config, model, PunData))
+        test_model(config, model, PunData)
+    elif config.is_pred:
+        model = PunDetModel.load_from_checkpoint(config.resume_checkpoint_path, config=config)
+        predict_model(config, model, PunData)

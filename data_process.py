@@ -76,7 +76,11 @@ class PunDataModule(pl.LightningDataModule):
             print("data_length: %d" % data_length)
             # self.test_data, self.test_labels, test_data_length = self.get_data(mode="test")
             # print("test_length: %d" % test_data_length)
-        else:
+        elif self.config.is_test:
+            print("loading testing dataset!")
+            self.data, self.pun_labels, data_length = self._get_data()
+            print("data_length: %d" % data_length)
+        elif self.config.is_pred:
             print("loading predicting dataset!")
             self.data, self.fake_labels, data_length = self._get_pred_data()
             print("data_length: %d" % data_length)
@@ -85,24 +89,30 @@ class PunDataModule(pl.LightningDataModule):
         ...
 
     def setup(self, stage: str):
-        if stage == "fit":
-            self.dataset = torch.utils.data.TensorDataset(
-                torch.LongTensor(self.data["input_ids"]),
-                torch.LongTensor(self.data["attention_mask"]),
-                torch.LongTensor(self.pun_labels),
-            )
-            self.train_dataset, self.val_dataset = random_split(self.dataset, [0.8, 0.2], generator=torch.Generator().manual_seed(20220924))
-            self.config.total_steps = math.ceil(self.config.max_epochs / self.config.accumulate_grad_batches * math.ceil(len(self.train_dataset) / self.config.batch_size))
-        
-        if stage == "test":
-            self.test_dataset = self.val_dataset
-
         if stage == "predict":
             self.pred_dataset = torch.utils.data.TensorDataset(
                 torch.LongTensor(self.data["input_ids"]),
                 torch.LongTensor(self.data["attention_mask"]),
                 torch.LongTensor(self.fake_labels)
             )
+        elif stage == "test":
+            self.dataset = torch.utils.data.TensorDataset(
+                torch.LongTensor(self.data["input_ids"]),
+                torch.LongTensor(self.data["attention_mask"]),
+                torch.LongTensor(self.pun_labels),
+            )
+            self.train_dataset, self.val_dataset = random_split(self.dataset, [0.8, 0.2], generator=torch.Generator().manual_seed(20220924))
+            self.test_dataset = self.val_dataset
+        else:
+            self.dataset = torch.utils.data.TensorDataset(
+                torch.LongTensor(self.data["input_ids"]),
+                torch.LongTensor(self.data["attention_mask"]),
+                torch.LongTensor(self.pun_labels),
+            )
+            self.train_dataset, self.val_dataset = random_split(self.dataset, [0.8, 0.2], generator=torch.Generator().manual_seed(20220924))
+            self.test_dataset = self.val_dataset
+
+            self.config.total_steps = math.ceil(self.config.max_epochs / self.config.accumulate_grad_batches * math.ceil(len(self.train_dataset) / self.config.batch_size))
         
     
     def train_dataloader(self):
