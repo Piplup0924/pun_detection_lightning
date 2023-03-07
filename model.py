@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import transformers
+from torch.nn import MultiheadAttention
 from  torchmetrics import Accuracy, Precision, Recall, F1Score
 from transformers import BartForSequenceClassification, BertTokenizer
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
@@ -23,15 +24,12 @@ class PunDetModel(pl.LightningModule):
         self.test_step_preds, self.test_step_labels = [], []
         self.predict_step_preds, self.predict_step_texts = [], []
         self.tokenizer = BertTokenizer.from_pretrained(config.pretrained_path)
-        self.model = BartForSequenceClassification.from_pretrained(config.pretrained_path, num_labels = config.num_classes)
-        self.val_acc = Accuracy(task="multiclass", num_classes=3)
-        self.val_precision = Precision(task="multiclass", average="macro", num_classes=3)
-        self.val_recall = Recall(task="multiclass", average="macro", num_classes=3)
-        self.val_macro_f1 = F1Score(task="multiclass", average="macro", num_classes=3)
-        self.test_acc = Accuracy(task="multiclass", num_classes=3)
-        self.test_precision = Precision(task="multiclass", average="macro", num_classes=3)
-        self.test_recall = Recall(task="multiclass", average="macro", num_classes=3)
-        self.test_macro_f1 = F1Score(task="multiclass", average="macro", num_classes=3)
+        self.model = BartForSequenceClassification.from_pretrained(config.pretrained_path, num_labels=config.num_classes)
+        self.val_acc = Accuracy(task="multiclass", num_classes=config.num_classes)
+        self.val_precision = Precision(task="multiclass", average="macro", num_classes=config.num_classes)
+        self.val_recall = Recall(task="multiclass", average="macro", num_classes=config.num_classes)
+        self.val_macro_f1 = F1Score(task="multiclass", average="macro", num_classes=config.num_classes)
+        # self.attention_layer = MultiheadAttention()
 
     def forward(self, input_ids, labels, attention_mask = None):
         """
@@ -69,7 +67,8 @@ class PunDetModel(pl.LightningModule):
         self.epoch += 1
 
     def training_step(self, batch, batch_idx):
-        x, a, y = batch
+        x, a, y_p, y_e = batch
+        y = y_e
         outputs = self(input_ids = x, attention_mask = a, labels = y)
         logits = outputs.logits
         loss = outputs.loss
@@ -79,7 +78,6 @@ class PunDetModel(pl.LightningModule):
     
     def on_train_epoch_end(self):
         # all_preds = torch.stack(self.training_step_outputs)
-        ...
         self.training_step_outputs.clear()
     
     def _calc_metrics(self, tp, p, t, percent=True):
@@ -101,8 +99,9 @@ class PunDetModel(pl.LightningModule):
 
     def _get_result(self, correct_counts, true_counts, pred_counts):
         pun_types = defaultdict(int, {0: "homophonic", 1: "homographic", 2: "others"})
+        emotion_types = defaultdict(int, {0: "看好", 1: "看衰", 2: "震荡", 3: "其他"})
 
-        for t in pun_types.keys():
+        for t in emotion_types.keys():
             precision, recall, f1 = self._calc_metrics(correct_counts[t], pred_counts[t], true_counts[t])
             # with open(os.path.join(self.config.checkpoint_path, self.config.label, "val_log.txt"), "w") as fout:
             #     fout.write("%17s: Precision: %6.2f%%; Recall: %6.2f%%; F1: %6.2f%%  (%d & %d) = %d\n" % (pun_types[t], precision, recall, f1, pred_counts[t], true_counts[t], correct_counts[t]))
@@ -112,11 +111,11 @@ class PunDetModel(pl.LightningModule):
 
 
     def validation_step(self, batch, batch_idx):
-        x, a, y = batch
+        x, a, y_p, y_e = batch
+        y = y_e
         outputs = self(input_ids = x, attention_mask = a, labels = y)
         logits = outputs.logits     # [batch_size, num_cls]
         loss = outputs.loss
-        self.validation_step_outputs.append(logits)
         pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
         self.validation_step_preds.extend(pred.cpu().numpy())
         self.validation_step_labels.extend(y.cpu().numpy())
@@ -138,7 +137,8 @@ class PunDetModel(pl.LightningModule):
 
     
     def test_step(self, batch, batch_idx):
-        x, a, y = batch
+        x, a, y_p, y_e = batch
+        y = y_e
         outputs = self(input_ids = x, attention_mask = a, labels = y)
         logits = outputs.logits
         pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
@@ -153,7 +153,8 @@ class PunDetModel(pl.LightningModule):
         
 
     def predict_step(self, batch, batch_idx, dataloader_idx = 0):
-        x, a, y = batch     # [batch_size, max_seq_len], [batch_size, max_seq_len], [batch_size,]
+        x, a, y_p, y_e = batch     # [batch_size, max_seq_len], [batch_size, max_seq_len], [batch_size,]
+        y = y_e
         outputs = self(input_ids = x, attention_mask = a, labels = y)
         logits = outputs.logits
         text = self.tokenizer.batch_decode(x, skip_special_tokens=True)

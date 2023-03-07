@@ -25,11 +25,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(BASE_DIR))
 warnings.filterwarnings('ignore')
 
+progress_bar = RichProgressBar(
+        theme=RichProgressBarTheme(
+            description="green_yellow",
+            progress_bar="green1",
+            progress_bar_finished="green1",
+            progress_bar_pulse="#6206E0",
+            batch_progress="green_yellow",
+            time="grey82",
+            processing_speed="grey82",
+            metrics="grey82",
+        ),
+        leave=True,
+    )
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--is_train", action="store_true", help="是否为训练阶段")
-    parser.add_argument("--is_test", action="store_false", help="是否为测试阶段")
+    parser.add_argument("--is_train", action="store_false", help="是否为训练阶段")
+    parser.add_argument("--is_test", action="store_true", help="是否为测试阶段")
     parser.add_argument("--is_pred", action="store_true", help="是否为预测阶段")
     parser.add_argument("--accelerator", type=str, default="gpu")
     parser.add_argument("--devices", type=int, default=[0])
@@ -40,13 +53,13 @@ def parse_args():
     parser.add_argument("--eps", type=float, default=1e-8, required=False, help="AdamW中的eps")
     parser.add_argument("--seed", type=int, default=20220924)
     parser.add_argument("--max_seq_length", type=int, default=512)
-    parser.add_argument("--num_classes", type=int, default=3)
+    parser.add_argument("--num_classes", type=int, default=4)
     parser.add_argument("--pretrained_path", type=str, default="./bart-large-chinese")
     parser.add_argument("--data_path", type=str, default="./pun.csv")
     parser.add_argument("--pred_path", type=str, default="./ugc_others.csv", required=False)
     parser.add_argument("--checkpoint_path", type=str, default="./saved_models", help="存放训练断点的路径")
     parser.add_argument("--default_root_dir", type=str, default="./")
-    parser.add_argument("--label", type=str, default="exp1")
+    parser.add_argument("--label", type=str, default="exp1_emotion")
     parser.add_argument('--accumulate_grad_batches', default=4, type=int, required=False, help='梯度积累')
     parser.add_argument('--warmup_steps', type=int, default=700, help='warm up steps')
     parser.add_argument('--gradient_clip_val', default=None, type=float, required=False)
@@ -66,20 +79,6 @@ def parse_args():
     return args
 
 def train_model(config, model, datamodule, logger):
-    # create your own theme!
-    progress_bar = RichProgressBar(
-        theme=RichProgressBarTheme(
-            description="green_yellow",
-            progress_bar="green1",
-            progress_bar_finished="green1",
-            progress_bar_pulse="#6206E0",
-            batch_progress="green_yellow",
-            time="grey82",
-            processing_speed="grey82",
-            metrics="grey82",
-        ),
-        leave=True,
-    )
     checkpoint = ModelCheckpoint(
         dirpath=config.checkpoint_path,
         filename="{epoch:02d}-{val_macro_f1:.4f}",
@@ -87,8 +86,8 @@ def train_model(config, model, datamodule, logger):
         save_on_train_epoch_end=True,
         monitor="val_macro_f1",
         mode="max",
-        save_top_k=3,
-        save_last=True,
+        save_top_k=2,
+        save_last=False,
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
     device_stats = DeviceStatsMonitor()
@@ -103,38 +102,12 @@ def train_model(config, model, datamodule, logger):
     # trainer.test(model, datamodule=datamodule, verbose=False)
     
 def predict_model(config, model, datamodule):
-    progress_bar = RichProgressBar(
-        theme=RichProgressBarTheme(
-            description="green_yellow",
-            progress_bar="green1",
-            progress_bar_finished="green1",
-            progress_bar_pulse="#6206E0",
-            batch_progress="green_yellow",
-            time="grey82",
-            processing_speed="grey82",
-            metrics="grey82",
-        ),
-        leave=True,
-    )
-    trainer = pl.Trainer.from_argparse_args(args=config)
+    trainer = pl.Trainer.from_argparse_args(args=config, callbacks=[progress_bar])
     predictions = trainer.predict(model, datamodule)
     return predictions
 
 def test_model(config, model, datamodule):
-    progress_bar = RichProgressBar(
-        theme=RichProgressBarTheme(
-            description="green_yellow",
-            progress_bar="green1",
-            progress_bar_finished="green1",
-            progress_bar_pulse="#6206E0",
-            batch_progress="green_yellow",
-            time="grey82",
-            processing_speed="grey82",
-            metrics="grey82",
-        ),
-        leave=True,
-    )
-    trainer = pl.Trainer.from_argparse_args(args=config)
+    trainer = pl.Trainer.from_argparse_args(args=config, callbacks=[progress_bar])
     trainer.test(model, datamodule)
 
 if __name__ == "__main__":
@@ -151,7 +124,7 @@ if __name__ == "__main__":
 
     print(config)
     if config.is_train:
-        wandb_logger = WandbLogger(project="alipay pun detection", name="BART_2_Large")
+        wandb_logger = WandbLogger(project="alipay pun detection", name="BART_2_Large_emotion")
         model = PunDetModel(config=config)
         train_model(config, model, PunData, wandb_logger)
     elif config.is_test:
