@@ -9,7 +9,7 @@ import pytorch_lightning as pl
 import transformers
 from torch.nn import MultiheadAttention
 from  torchmetrics import Accuracy, Precision, Recall, F1Score
-from transformers import BartForSequenceClassification, BertTokenizer
+from transformers import BartForSequenceClassification, BertTokenizer, BertModel
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 
 from utils import create_dir
@@ -23,15 +23,21 @@ class PunDetModel(pl.LightningModule):
         self.validation_step_preds, self.validation_step_labels = [], []
         self.test_step_preds, self.test_step_labels = [], []
         self.predict_step_preds, self.predict_step_texts = [], []
-        self.tokenizer = BertTokenizer.from_pretrained(config.pretrained_path)
-        self.model = BartForSequenceClassification.from_pretrained(config.pretrained_path, num_labels=config.num_classes)
+        self.tokenizer = BertTokenizer.from_pretrained(config.bert_pretrained_path)
+        self.pun_bert_embedding = BertModel.from_pretrained(config.bert_pretrained_path)
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_channels=768, out_channels=768, kernel_size=2, stride=2),
+            nn.Conv1d(in_channels=768, out_channels=768, kernel_size=3, stride=2),
+            nn.Conv1d(in_channels=768, out_channels=768, kernel_size=4, stride=2)
+        )
+        # self.model = BartForSequenceClassification.from_pretrained(config.bart_pretrained_path, num_labels=config.num_classes)
         self.val_acc = Accuracy(task="multiclass", num_classes=config.num_classes)
         self.val_precision = Precision(task="multiclass", average="macro", num_classes=config.num_classes)
         self.val_recall = Recall(task="multiclass", average="macro", num_classes=config.num_classes)
         self.val_macro_f1 = F1Score(task="multiclass", average="macro", num_classes=config.num_classes)
         # self.attention_layer = MultiheadAttention()
 
-    def forward(self, input_ids, labels, attention_mask = None):
+    def forward(self, input_ids, attention_mask = None):
         """
         Params input_ids: [batch_size, seq_len]
         Params attention_mask: [batch_size, seq_len]
@@ -39,9 +45,12 @@ class PunDetModel(pl.LightningModule):
         Return:
         outputs: [batch_size, seq_len, num_labels]
         """
-        outputs = self.model(input_ids, attention_mask=attention_mask, labels=labels)
+        pbe = self.pun_bert_embedding(input_ids, attention_mask)[0]        # [batch_size, seq_len, hidden_size=768]
+        pbe = pbe.permute(0, 2, 1)
+        conv_output = self.conv(pbe)
+        # outputs = self.model(input_ids, attention_mask=attention_mask, labels=labels)
 
-        return outputs
+        return conv_output
     
     def _count_chunks(self, pred, y):
         """
@@ -69,7 +78,7 @@ class PunDetModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, a, y_p, y_e = batch
         y = y_e
-        outputs = self(input_ids = x, attention_mask = a, labels = y)
+        outputs = self(input_ids = x, attention_mask = a)
         logits = outputs.logits
         loss = outputs.loss
         self.training_step_outputs.append(logits)
@@ -105,7 +114,7 @@ class PunDetModel(pl.LightningModule):
             precision, recall, f1 = self._calc_metrics(correct_counts[t], pred_counts[t], true_counts[t])
             # with open(os.path.join(self.config.checkpoint_path, self.config.label, "val_log.txt"), "w") as fout:
             #     fout.write("%17s: Precision: %6.2f%%; Recall: %6.2f%%; F1: %6.2f%%  (%d & %d) = %d\n" % (pun_types[t], precision, recall, f1, pred_counts[t], true_counts[t], correct_counts[t]))
-            print("%17s: " % pun_types[t], end = '')
+            print("%17s: " % emotion_types[t], end = '')
             print("Precision: %6.2f%%; Recall: %6.2f%%; F1: %6.2f%%" % (precision, recall, f1), end="")
             print("  (%d & %d) = %d" % (pred_counts[t], true_counts[t], correct_counts[t]))
 
@@ -113,7 +122,7 @@ class PunDetModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, a, y_p, y_e = batch
         y = y_e
-        outputs = self(input_ids = x, attention_mask = a, labels = y)
+        outputs = self(input_ids = x, attention_mask = a)
         logits = outputs.logits     # [batch_size, num_cls]
         loss = outputs.loss
         pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
@@ -139,7 +148,7 @@ class PunDetModel(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         x, a, y_p, y_e = batch
         y = y_e
-        outputs = self(input_ids = x, attention_mask = a, labels = y)
+        outputs = self(input_ids = x, attention_mask = a)
         logits = outputs.logits
         pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
         self.test_step_preds.extend(pred.cpu().numpy())
@@ -155,7 +164,7 @@ class PunDetModel(pl.LightningModule):
     def predict_step(self, batch, batch_idx, dataloader_idx = 0):
         x, a, y_p, y_e = batch     # [batch_size, max_seq_len], [batch_size, max_seq_len], [batch_size,]
         y = y_e
-        outputs = self(input_ids = x, attention_mask = a, labels = y)
+        outputs = self(input_ids = x, attention_mask = a)
         logits = outputs.logits
         text = self.tokenizer.batch_decode(x, skip_special_tokens=True)
         pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
@@ -173,7 +182,8 @@ class PunDetModel(pl.LightningModule):
 
     
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr, eps=self.config.eps)
+        args_list = [p for p in self.parameters() if p.requires_grad]
+        optimizer = torch.optim.AdamW(args_list, lr=self.config.lr, eps=self.config.eps)
         return {
             "optimizer": optimizer,
             # "lr_scheduler": {

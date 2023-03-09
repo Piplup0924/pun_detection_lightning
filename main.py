@@ -44,8 +44,9 @@ def parse_args():
     parser.add_argument("--is_train", action="store_false", help="是否为训练阶段")
     parser.add_argument("--is_test", action="store_true", help="是否为测试阶段")
     parser.add_argument("--is_pred", action="store_true", help="是否为预测阶段")
+    parser.add_argument("--is_wandb_log", action="store_true", help="是否开启wandb记录")
     parser.add_argument("--accelerator", type=str, default="gpu")
-    parser.add_argument("--devices", type=int, default=[0])
+    parser.add_argument("--devices", type=int, default=[1])
     parser.add_argument("--max_epochs", type=int, default=30)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--pred_batch_size", type=int, default=128)
@@ -54,7 +55,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=20220924)
     parser.add_argument("--max_seq_length", type=int, default=512)
     parser.add_argument("--num_classes", type=int, default=4)
-    parser.add_argument("--pretrained_path", type=str, default="./bart-large-chinese")
+    parser.add_argument("--bart_pretrained_path", type=str, default="./bart-large-chinese")
+    parser.add_argument("--bert_pretrained_path", type=str, default="./bert-base-chinese")
     parser.add_argument("--data_path", type=str, default="./pun.csv")
     parser.add_argument("--pred_path", type=str, default="./ugc_others.csv", required=False)
     parser.add_argument("--checkpoint_path", type=str, default="./saved_models", help="存放训练断点的路径")
@@ -92,7 +94,10 @@ def train_model(config, model, datamodule, logger):
     lr_monitor = LearningRateMonitor(logging_interval="step")
     device_stats = DeviceStatsMonitor()
     trainer = pl.Trainer.from_argparse_args(args=config, callbacks=[checkpoint, lr_monitor, device_stats, progress_bar], logger=wandb_logger)
-    wandb_logger.watch(model, log="all")
+
+    if config.is_wandb_log:
+        wandb_logger.watch(model, log="all")
+
     if config.is_resume:
         trainer.fit(model, datamodule=datamodule, ckpt_path = config.resume_checkpoint_path)
     else:
@@ -124,8 +129,8 @@ if __name__ == "__main__":
 
     print(config)
     if config.is_train:
-        wandb_logger = WandbLogger(project="alipay pun detection", name="BART_2_Large_emotion")
         model = PunDetModel(config=config)
+        wandb_logger = WandbLogger(project="alipay pun detection", name="BART_2_Large_emotion") if config.is_wandb_log else True
         train_model(config, model, PunData, wandb_logger)
     elif config.is_test:
         model = PunDetModel.load_from_checkpoint(config.resume_checkpoint_path, config=config)

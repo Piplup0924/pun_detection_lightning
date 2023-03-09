@@ -7,3 +7,5 @@ __pycache__
 others.txt
 results
 data.ipynb
+bart-large-chinese
+bert-base-chinese

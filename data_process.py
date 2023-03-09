@@ -20,7 +20,7 @@ class PunDataModule(pl.LightningDataModule):
     def __init__(self, config) -> None:
         super().__init__()
         self.data_path = config.data_path
-        self.tokenizer = BertTokenizer.from_pretrained(config.pretrained_path)
+        self.tokenizer = BertTokenizer.from_pretrained(config.bert_pretrained_path)
         self.labels = config.num_classes
         self.config = config
         self._load_data()
@@ -38,7 +38,7 @@ class PunDataModule(pl.LightningDataModule):
             padding=True,
             truncation=True,
             return_tensors="pt",
-            max_length=512,
+            # max_length=512,
         )
         return tokenized_data, pun_labels, emotion_labels, data_length
     
