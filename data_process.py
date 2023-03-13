@@ -35,10 +35,10 @@ class PunDataModule(pl.LightningDataModule):
         data_length = len(text)
         tokenized_data = self.tokenizer(
             text,
-            padding=True,
+            padding="max_length",
             truncation=True,
             return_tensors="pt",
-            # max_length=512,
+            max_length=512,
         )
         return tokenized_data, pun_labels, emotion_labels, data_length
     
@@ -69,6 +69,21 @@ class PunDataModule(pl.LightningDataModule):
             max_length=512,
         )
         return tokenized_data, fake_labels, fake_labels, data_length
+    
+    def _get_pred_data_2(self):
+        with open("./results/exp1_results.txt", 'r') as f:
+            content = f.readlines()
+        text = list(filter(lambda x: len(x) > 2, map(lambda x:x[:-3], content)))
+        data_length = len(text)
+        fake_labels = [0] * data_length
+        tokenized_data = self.tokenizer(
+            text,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=512,
+        )
+        return tokenized_data, fake_labels, fake_labels, data_length
 
 
     def _load_data(self):
@@ -84,7 +99,7 @@ class PunDataModule(pl.LightningDataModule):
             print("data_length: %d" % data_length)
         elif self.config.is_pred:
             print("loading predicting dataset!")
-            self.data, self.pun_labels, self.emotion_labels, data_length = self._get_pred_data()
+            self.data, self.pun_labels, self.emotion_labels, data_length = self._get_pred_data_2()
             print("data_length: %d" % data_length)
 
     def prepare_data(self):

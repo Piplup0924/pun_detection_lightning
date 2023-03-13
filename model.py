@@ -8,9 +8,10 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import transformers
 from torch.nn import MultiheadAttention
-from  torchmetrics import Accuracy, Precision, Recall, F1Score
+from torchmetrics import Accuracy, Precision, Recall, F1Score
 from transformers import BartForSequenceClassification, BertTokenizer, BertModel
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
+
 
 from utils import create_dir
 
@@ -24,11 +25,14 @@ class PunDetModel(pl.LightningModule):
         self.test_step_preds, self.test_step_labels = [], []
         self.predict_step_preds, self.predict_step_texts = [], []
         self.tokenizer = BertTokenizer.from_pretrained(config.bert_pretrained_path)
-        self.pun_bert_embedding = BertModel.from_pretrained(config.bert_pretrained_path)
-        self.conv = nn.Sequential(
-            nn.Conv1d(in_channels=768, out_channels=768, kernel_size=2, stride=2),
-            nn.Conv1d(in_channels=768, out_channels=768, kernel_size=3, stride=2),
-            nn.Conv1d(in_channels=768, out_channels=768, kernel_size=4, stride=2)
+        self.character_bert = BertModel.from_pretrained(config.bert_pretrained_path)
+        self.context_bert = BertModel.from_pretrained(config.bert_pretrained_path)
+        self.conv = nn.ModuleList(
+            [nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(2, 768)),
+            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(3, 768)),
+            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(4, 768)),
+            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(5, 768)),
+            ]
         )
         # self.model = BartForSequenceClassification.from_pretrained(config.bart_pretrained_path, num_labels=config.num_classes)
         self.val_acc = Accuracy(task="multiclass", num_classes=config.num_classes)
@@ -37,7 +41,7 @@ class PunDetModel(pl.LightningModule):
         self.val_macro_f1 = F1Score(task="multiclass", average="macro", num_classes=config.num_classes)
         # self.attention_layer = MultiheadAttention()
 
-    def forward(self, input_ids, attention_mask = None):
+    def forward(self, input_ids, attention_mask):
         """
         Params input_ids: [batch_size, seq_len]
         Params attention_mask: [batch_size, seq_len]
@@ -45,12 +49,22 @@ class PunDetModel(pl.LightningModule):
         Return:
         outputs: [batch_size, seq_len, num_labels]
         """
-        pbe = self.pun_bert_embedding(input_ids, attention_mask)[0]        # [batch_size, seq_len, hidden_size=768]
-        pbe = pbe.permute(0, 2, 1)
-        conv_output = self.conv(pbe)
+        cbe = self.character_bert(input_ids, attention_mask)[0]        # [batch_size, seq_len=512, hidden_size=768]
+        cbe = cbe.unsqueeze(1)           # [batch_size, 1, seq_len, hidden_size]
+        x = [F.leaky_relu(conv(cbe)) for conv in self.conv]       # 4 * [batch_size, 32, seq_len, hidden_size]
+        x = [F.max_pool2d(input=x_item, kernel_size=(x_item.size(2), x_item.size(3))) for x_item in x]      # 4 * [batch_size, 32, 1, 1]
+        x = [x_item.view(x_item.size(0), -1) for x_item in x]       # 4 * [batch_size, 32]
+        x = torch.cat(x, 1)     # [batch_size, 128]
+        char_part = self.dropout(x)     # [batch_size, 128]
+        context = self.context_bert(input_ids, attention_mask)[0]
+
+
+
+
+
         # outputs = self.model(input_ids, attention_mask=attention_mask, labels=labels)
 
-        return conv_output
+        return 
     
     def _count_chunks(self, pred, y):
         """
@@ -77,7 +91,7 @@ class PunDetModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, a, y_p, y_e = batch
-        y = y_e
+        y = y_p
         outputs = self(input_ids = x, attention_mask = a)
         logits = outputs.logits
         loss = outputs.loss
@@ -163,8 +177,8 @@ class PunDetModel(pl.LightningModule):
 
     def predict_step(self, batch, batch_idx, dataloader_idx = 0):
         x, a, y_p, y_e = batch     # [batch_size, max_seq_len], [batch_size, max_seq_len], [batch_size,]
-        y = y_e
-        outputs = self(input_ids = x, attention_mask = a)
+        y = y_p
+        outputs = self(input_ids = x, attention_mask = a, labels = y)
         logits = outputs.logits
         text = self.tokenizer.batch_decode(x, skip_special_tokens=True)
         pred = torch.argmax(F.softmax(logits, dim = 1), dim = 1)
